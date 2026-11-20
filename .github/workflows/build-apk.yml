@@ -25,9 +25,17 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # "tools" is obsolete and is no longer available from sdkmanager.
+          packages: platform-tools
 
       - name: Install Android SDK components
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+        run: |
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
 
       - name: Set up CMake
         uses: lukka/get-cmake@latest
@@ -57,7 +65,7 @@ jobs:
           echo "QNN_SDK_ROOT=${sample_app%/examples/QNN/SampleApp/SampleApp}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
           sudo mkdir -p /data
-          sudo ln -s "$ANDROID_HOME/ndk/28.2.13676358" /data/android-ndk-r28
+          sudo ln -sfn "$ANDROID_HOME/ndk/28.2.13676358" /data/android-ndk-r28
 
       - name: Build native libraries
         run: app/src/main/cpp/build.sh
