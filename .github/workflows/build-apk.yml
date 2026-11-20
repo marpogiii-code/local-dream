@@ -1,0 +1,90 @@
+name: Build APK
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+
+      - name: Set up CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Download Qualcomm AI Runtime SDK
+        env:
+          QNN_SDK_URL: ${{ secrets.QNN_SDK_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$QNN_SDK_URL" ]]; then
+            echo "Set the QNN_SDK_URL repository secret." >&2
+            exit 1
+          fi
+
+          archive="$RUNNER_TEMP/qnn-sdk.zip"
+          sdk_dir="$RUNNER_TEMP/qnn-sdk"
+          curl --fail --location --retry 3 "$QNN_SDK_URL" --output "$archive"
+          mkdir -p "$sdk_dir"
+          unzip -q "$archive" -d "$sdk_dir"
+
+          sample_app="$(find "$sdk_dir" -type d -path '*/examples/QNN/SampleApp/SampleApp' -print -quit)"
+          if [[ -z "$sample_app" ]]; then
+            echo "Archive does not contain examples/QNN/SampleApp/SampleApp." >&2
+            exit 1
+          fi
+
+          echo "QNN_SDK_ROOT=${sample_app%/examples/QNN/SampleApp/SampleApp}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          sudo mkdir -p /data
+          sudo ln -s "$ANDROID_HOME/ndk/28.2.13676358" /data/android-ndk-r28
+
+      - name: Build native libraries
+        run: app/src/main/cpp/build.sh
+
+      - name: Create temporary signing key
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/ci-keystore.jks" \
+            -storepass ci-temporary-password \
+            -keypass ci-temporary-password \
+            -alias ci \
+            -dname "CN=GitHub Actions" \
+            -keyalg RSA -keysize 2048 -validity 2
+
+      - name: Build APKs
+        run: |
+          ./gradlew --no-daemon \
+            -PRELEASE_STORE_FILE="$RUNNER_TEMP/ci-keystore.jks" \
+            -PRELEASE_STORE_PASSWORD=ci-temporary-password \
+            -PRELEASE_KEY_ALIAS=ci \
+            -PRELEASE_KEY_PASSWORD=ci-temporary-password \
+            assembleBasicDebug assembleFilterDebug
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-dream-apks
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
